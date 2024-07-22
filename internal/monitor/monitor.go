@@ -173,7 +173,8 @@ func (m *ADOMonitor) fetchPipelineTimeline(BuildId *int, status display.Pipeline
 			// m.processApprovals(record, recordMap)
 			stage := []display.StageStatus{
 				{
-					ID:     *record.Order,
+					ID:     *record.Id,
+					Order:  *record.Order,
 					Name:   *record.Name,
 					Status: cases.Title(language.English).String(string(*record.State)),
 					Result: cases.Title(language.English).String(resultString),

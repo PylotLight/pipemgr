@@ -3,12 +3,12 @@ package display
 import (
 	"fmt"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/google/uuid"
 )
 
 type PipelineStatus struct {
@@ -23,10 +23,11 @@ type PipelineStatus struct {
 }
 
 type StageStatus struct {
-	ID     int
+	ID     uuid.UUID
 	Name   string
 	Status string
 	Result string
+	Order  int
 }
 
 type model struct {
@@ -50,7 +51,6 @@ func InitialModel() model {
 	}
 
 	stageColumns := []table.Column{
-		{Title: "ID", Width: 5},
 		{Title: "Stage", Width: 10},
 		{Title: "Status", Width: 10},
 		{Title: "Result", Width: 10},
@@ -98,6 +98,7 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
+	// println()
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -105,17 +106,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		case "tab":
 			m.focusIndex = (m.focusIndex + 1) % 2
-		// case "up", "down", "left", "right":
-		// 	if m.focusIndex == 0 {
-		// 		m.pipelineTable, cmd = m.pipelineTable.Update(msg)
-		// 		m.updateStagesTable()
-		// 	} else {
-		// 		m.stageTable, cmd = m.stageTable.Update(msg)
-		// 		println(m.stageTable.Cursor())
-		// 		m.stageTable.SetCursor(1)
-		// 		// println(cmd)
-		// 	}
-		case "up":
+		case "up", "down":
+			// switch {
+			// 	case m.focusIndex == 0
+			// }
+			if m.focusIndex == 0 {
+				m.pipelineTable, cmd = m.pipelineTable.Update(msg)
+				m.updateStagesTable()
+			} else {
+				cursorMov := m.stageTable.Cursor() + 1
+				if msg.String() == "up" {
+					cursorMov = m.stageTable.Cursor() - 1
+				}
+				m.stageTable, cmd = m.stageTable.Update(msg)
+				m.stageTable.SetCursor(cursorMov)
+				// println(m.stageTable.Cursor())
+				// println(cmd)
+			}
+		case "k":
 			tableModel := m.pipelineTable
 			if m.focusIndex == 1 {
 				tableModel = m.stageTable
@@ -123,20 +131,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 			if tableModel.Cursor() > 0 {
 				tableModel.SetCursor(tableModel.Cursor() - 1)
-				tableModel.UpdateViewport()
+				// tableModel.UpdateViewport()
+				tableModel, cmd = tableModel.Update(msg)
+				m.updateStagesTable()
 			}
-			tableModel, cmd = tableModel.Update(msg)
-			m.updateStagesTable()
-		case "down":
+
+		case "j":
 			tableModel := m.pipelineTable
 			if m.focusIndex == 1 {
 				tableModel = m.stageTable
 			}
 			if tableModel.Cursor() < len(tableModel.Rows())-1 {
 				tableModel.SetCursor(tableModel.Cursor() + 1)
-				tableModel.UpdateViewport()
+				// tableModel.UpdateViewport()
+				tableModel, cmd = tableModel.Update(msg)
+				m.updateStagesTable()
 			}
-			tableModel, cmd = tableModel.Update(msg)
 
 		}
 	case tea.WindowSizeMsg:
@@ -196,13 +206,12 @@ func (m *model) updateStagesTable() {
 		// println(selectedPipeline.Name)
 
 		sort.Slice(selectedPipeline.Stages, func(i, j int) bool {
-			return selectedPipeline.Stages[i].ID < selectedPipeline.Stages[j].ID
+			return selectedPipeline.Stages[i].Order < selectedPipeline.Stages[j].Order
 		})
 
 		var stageRows []table.Row
 		for _, stage := range selectedPipeline.Stages {
 			stageRows = append(stageRows, table.Row{
-				strconv.Itoa(stage.ID),
 				stage.Name,
 				stage.Status,
 				stage.Result,
@@ -229,7 +238,7 @@ func (m model) View() string {
 	// stageInfoWidth := m.width/2 - 2
 
 	mainTableWidth := m.width/2 - 4
-	stageInfoWidth := m.width/2 - 4
+	stageInfoWidth := m.width/3 - 4
 
 	m.pipelineTable.SetWidth(mainTableWidth)
 	m.stageTable.SetWidth(stageInfoWidth)
