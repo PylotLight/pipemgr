@@ -32,6 +32,11 @@ type ADOMonitor struct {
 	StatusMap      map[string]string
 }
 
+type RecordInfo struct {
+	Record   *build.TimelineRecord
+	Children map[uuid.UUID]*build.TimelineRecord
+}
+
 func NewADOMonitor(pat, org, project string) (*ADOMonitor, error) {
 	ctx := context.Background()
 	connection := azuredevops.NewPatConnection(org, pat)
@@ -148,29 +153,25 @@ func (m *ADOMonitor) fetchPipelineTimeline(BuildId *int, status display.Pipeline
 		log.Fatalf("Error getting build timeline: %v", err)
 	}
 	// Create a map to store the relationships between records
-	recordMap := make(map[uuid.UUID]*build.TimelineRecord)
-	for _, record := range *timeline.Records {
-		recordMap[*record.Id] = &record
-	}
+	// recordMap := m.buildRecordMap(timeline)
+
 	// Process the timeline records
 	for _, record := range *timeline.Records {
+		// record := info.Record
 		if *record.Type == "Stage" {
 			resultString := ""
 			if record.Result != nil {
 				resultString = strings.ToTitle(string(*record.Result))
 			}
-			// statusString := ""
-			// if record.Result != nil {
-			// 	cases.Title(language.English).String(resultString)
-			// }
-			// "type": "Checkpoint.Authorization", only used for env auth, approval is for approval gates
-			/*
-				If stage state is in pending, we map parentID for type "Checkpoint"
-				then map its id and parentid to get "type": "Checkpoint.Approval"
-				then we probably just output "awaiting approval" or something like that.
-				We should be able to use the ID of that approval type to update approval via api as well
-			*/
-			// m.processApprovals(record, recordMap)
+
+			if *record.State == "pending" {
+				approval := m.processApprovals(&record, timeline.Records)
+				if approval != nil {
+					// resultString = approval.Steps[0]
+					resultString = fmt.Sprintf("Awaiting Approval %s", *(*approval.Steps)[0].ActualApprover.DisplayName)
+					// fmt.Printf("%+v", approval)
+				}
+			}
 			stage := []display.StageStatus{
 				{
 					ID:     *record.Id,
@@ -189,38 +190,162 @@ func (m *ADOMonitor) fetchPipelineTimeline(BuildId *int, status display.Pipeline
 	return status, nil
 }
 
-func findChildRecord(recordMap map[uuid.UUID]*build.TimelineRecord, parentID uuid.UUID, recordType string) *build.TimelineRecord {
-	for _, record := range recordMap {
-		if record.ParentId != nil && *record.ParentId == parentID && *record.Type == recordType {
-			return record
+func (m *ADOMonitor) processApprovals(currentStage *build.TimelineRecord, Records *[]build.TimelineRecord) *pipelinesapproval.Approval {
+	// Find Checkpoint record
+	var checkpointRecord *build.TimelineRecord
+	for _, potentialCheckpoint := range *Records {
+		if *potentialCheckpoint.Type == "Checkpoint" && *potentialCheckpoint.ParentId == *currentStage.Id {
+			checkpointRecord = &potentialCheckpoint
+			break
+		}
+	}
+
+	if checkpointRecord != nil {
+		// Find Checkpoint.Approval record
+		var approvalRecord *build.TimelineRecord
+		for _, potentialApproval := range *Records {
+			if *potentialApproval.Type == "Checkpoint.Approval" && *potentialApproval.ParentId == *checkpointRecord.Id {
+				approvalRecord = &potentialApproval
+				break
+			}
+		}
+
+		if approvalRecord != nil {
+			// fmt.Printf("Awaiting approval (Approval ID: %s)\n", *approvalRecord.Id)
+			// Get approval details
+			approval, err := m.approvClient.GetApproval(m.ctx, pipelinesapproval.GetApprovalArgs{
+				Project:    &m.project,
+				ApprovalId: approvalRecord.Id,
+				Expand:     &pipelinesapproval.ApprovalDetailsExpandParameterValues.Steps,
+				// Expand:     &pipelinesapproval.ApprovalDetailsExpandParameterValues.Permissions,
+			})
+			if err != nil {
+				// log.Printf("Error getting approval details: %v", err)
+				return nil
+			}
+
+			// approvalQuery, err := m.approvClient.QueryApprovals(m.ctx, pipelinesapproval.QueryApprovalsArgs{
+			// 	Project:     &m.project,
+			// 	ApprovalIds: &[]uuid.UUID{*approvalRecord.Id},
+			// 	Expand:      &pipelinesapproval.ApprovalDetailsExpandParameterValues.Steps,
+			// })
+			// if len(*approvalQuery) > 0 {
+			// 	println("found approval query")
+			// 	return &(*approvalQuery)[0]
+			// }
+			return approval
+		}
+	}
+
+	return nil
+}
+
+func (m *ADOMonitor) buildRecordMap(timeline *build.Timeline) map[uuid.UUID]*RecordInfo {
+	recordMap := make(map[uuid.UUID]*RecordInfo)
+
+	for _, record := range *timeline.Records {
+		info, exists := recordMap[*record.Id]
+		if !exists {
+			info = &RecordInfo{
+				Record:   &record,
+				Children: make(map[uuid.UUID]*build.TimelineRecord),
+			}
+			recordMap[*record.Id] = info
+		}
+
+		if record.ParentId != nil {
+			parentID := *record.ParentId
+			parentInfo, exists := recordMap[parentID]
+			if !exists {
+				parentInfo = &RecordInfo{
+					Record:   nil, // Placeholder, will be filled if the parent record appears later
+					Children: make(map[uuid.UUID]*build.TimelineRecord),
+				}
+				recordMap[parentID] = parentInfo
+			}
+			parentInfo.Children[*record.Id] = &record
+		}
+	}
+
+	return recordMap
+}
+
+// func findChildRecord(recordMap map[uuid.UUID]*build.TimelineRecord, parentID uuid.UUID, recordType string) *build.TimelineRecord {
+// 	for _, record := range recordMap {
+// 		if record.ParentId != nil && *record.ParentId == parentID && *record.Type == recordType {
+// 			return record
+// 		}
+// 	}
+// 	return nil
+// }
+
+func findChildRecord(recordMap map[uuid.UUID]*RecordInfo, parentID uuid.UUID, recordType string) *build.TimelineRecord {
+	if parentInfo, exists := recordMap[parentID]; exists {
+		for _, child := range parentInfo.Children {
+			if *child.Type == recordType {
+				return child
+			}
 		}
 	}
 	return nil
 }
 
-func (m *ADOMonitor) processApprovals(record build.TimelineRecord, recordMap map[uuid.UUID]*build.TimelineRecord) {
-	if *record.State == "pending" {
-		checkpointRecord := findChildRecord(recordMap, *record.Id, "Checkpoint")
-		if checkpointRecord != nil {
-			approvalRecord := findChildRecord(recordMap, *checkpointRecord.Id, "Checkpoint.Approval")
-			if approvalRecord != nil {
-				fmt.Printf("Awaiting approval (Approval ID: %s)\n", *approvalRecord.Id)
-				// Get approval details
-				approval, err := m.approvClient.GetApproval(m.ctx, pipelinesapproval.GetApprovalArgs{
-					Project:    &m.project,
-					ApprovalId: approvalRecord.Id,
-				})
-				if err != nil {
-					log.Printf("Error getting approval details: %v", err)
-				} else {
-					// printApprovalDetails(approval)
-					fmt.Println(approval)
-				}
-			}
-		}
-	}
+// func (m *ADOMonitor) processApprovals(record *build.TimelineRecord, recordMap struct {
+// 	record   *build.TimelineRecord
+// 	Children map[string][]*build.TimelineRecord
+// } /* recordMap map[uuid.UUID]*build.TimelineRecord */) {
+// 	// "type": "Checkpoint.Authorization", only used for env auth, approval is for approval gates
+// 	/*
+// 		If stage state is in pending, we map parentID for type "Checkpoint"
+// 		then map its id and parentid to get "type": "Checkpoint.Approval"
+// 		then we probably just output "awaiting approval" or something like that.
+// 		We should be able to use the ID of that approval type to update approval via api as well
+// 	*/
+// 	checkpointRecord := findChildRecord(recordMap, *record.Id, "Checkpoint")
+// 	if checkpointRecord != nil {
+// 		approvalRecord := findChildRecord(recordMap, *checkpointRecord.Id, "Checkpoint.Approval")
+// 		if approvalRecord != nil {
+// 			fmt.Printf("Awaiting approval (Approval ID: %s)\n", *approvalRecord.Id)
+// 			// Get approval details
+// 			approval, err := m.approvClient.GetApproval(m.ctx, pipelinesapproval.GetApprovalArgs{
+// 				Project:    &m.project,
+// 				ApprovalId: approvalRecord.Id,
+// 			})
+// 			if err != nil {
+// 				log.Printf("Error getting approval details: %v", err)
+// 			} else {
+// 				fmt.Println(approval)
+// 			}
+// 		}
+// 	}
 
-}
+// }
+
+// func (m *ADOMonitor) processApprovals(record *build.TimelineRecord, recordMap map[uuid.UUID]*RecordInfo) {
+// 	// "type": "Checkpoint.Authorization", only used for env auth, approval is for approval gates
+// 	/*
+// 	   If stage state is in pending, we map parentID for type "Checkpoint"
+// 	   then map its id and parentid to get "type": "Checkpoint.Approval"
+// 	*/
+
+// 	checkpointRecord := findChildRecord(recordMap, *record.Id, "Checkpoint")
+// 	if checkpointRecord != nil {
+// 		approvalRecord := findChildRecord(recordMap, *checkpointRecord.Id, "Checkpoint.Approval")
+// 		if approvalRecord != nil {
+// 			fmt.Printf("Awaiting approval (Approval ID: %s)\n", *approvalRecord.Id)
+// 			// Get approval details
+// 			approval, err := m.approvClient.GetApproval(m.ctx, pipelinesapproval.GetApprovalArgs{
+// 				Project:    &m.project,
+// 				ApprovalId: approvalRecord.Id,
+// 			})
+// 			if err != nil {
+// 				log.Printf("Error getting approval details: %v", err)
+// 			} else {
+// 				fmt.Println(approval)
+// 			}
+// 		}
+// 	}
+// }
 
 func calculateTimeElapsed(startTime time.Time, finishTime *azuredevops.Time) string {
 	var elapsed time.Duration
