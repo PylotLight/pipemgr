@@ -98,7 +98,6 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	// println()
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -148,32 +147,9 @@ func (m *model) updateTables() {
 	m.updateStagesTable()
 }
 
-// func (m *model) updateStagesTable() {
-// 	if len(m.statuses) > 0 {
-// 		selectedPipeline := m.statuses[m.pipelineTable.Cursor()]
-// 		var stageRows []table.Row
-// 		for _, stage := range selectedPipeline.Stages {
-// 			stageRows = append(stageRows, table.Row{
-// 				strconv.Itoa(stage.ID),
-// 				stage.Name,
-// 				stage.Status,
-// 				stage.Result,
-// 			})
-// 		}
-// 		// Sort stages by ID
-// 		sort.Slice(stageRows, func(i, j int) bool {
-// 			idI, _ := strconv.Atoi(stageRows[i][0])
-// 			idJ, _ := strconv.Atoi(stageRows[j][0])
-// 			return idI < idJ
-// 		})
-// 		m.stageTable.SetRows(stageRows)
-// 	}
-// }
-
 func (m *model) updateStagesTable() {
 	if len(m.statuses) > 0 {
 		selectedPipeline := m.statuses[m.pipelineTable.Cursor()]
-		// println(selectedPipeline.Name)
 
 		sort.Slice(selectedPipeline.Stages, func(i, j int) bool {
 			return selectedPipeline.Stages[i].Order < selectedPipeline.Stages[j].Order
@@ -204,9 +180,6 @@ func (m model) View() string {
 		BorderStyle(lipgloss.NormalBorder()).
 		BorderForeground(lipgloss.Color("240"))
 
-	// mainTableWidth := m.width/2 - 2
-	// stageInfoWidth := m.width/2 - 2
-
 	mainTableWidth := m.width/2 - 4
 	stageInfoWidth := m.width/3 - 4
 
@@ -222,14 +195,6 @@ func (m model) View() string {
 		mainTable = unfocusedStyle.Width(mainTableWidth).Render(m.pipelineTable.View())
 		stageTable = focusedStyle.Width(stageInfoWidth).Render(m.stageTable.View())
 	}
-
-	// if m.focusIndex == 0 {
-	// 	mainTable = focusedStyle.Render(m.pipelineTable.View())
-	// 	stageTable = unfocusedStyle.Render(m.stageTable.View())
-	// } else {
-	// 	mainTable = unfocusedStyle.Render(m.pipelineTable.View())
-	// 	stageTable = focusedStyle.Render(m.stageTable.View())
-	// }
 
 	mainView := lipgloss.JoinHorizontal(lipgloss.Left, mainTable, stageTable)
 	// mainView := lipgloss.JoinVertical(lipgloss.Left, mainTable, stageTable)
