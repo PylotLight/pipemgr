@@ -107,9 +107,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab":
 			m.focusIndex = (m.focusIndex + 1) % 2
 		case "up", "down":
-			// switch {
-			// 	case m.focusIndex == 0
-			// }
 			if m.focusIndex == 0 {
 				m.pipelineTable, cmd = m.pipelineTable.Update(msg)
 				m.updateStagesTable()
@@ -120,34 +117,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.stageTable, cmd = m.stageTable.Update(msg)
 				m.stageTable.SetCursor(cursorMov)
-				// println(m.stageTable.Cursor())
-				// println(cmd)
 			}
-		case "k":
-			tableModel := m.pipelineTable
-			if m.focusIndex == 1 {
-				tableModel = m.stageTable
-			}
-
-			if tableModel.Cursor() > 0 {
-				tableModel.SetCursor(tableModel.Cursor() - 1)
-				// tableModel.UpdateViewport()
-				tableModel, cmd = tableModel.Update(msg)
-				m.updateStagesTable()
-			}
-
-		case "j":
-			tableModel := m.pipelineTable
-			if m.focusIndex == 1 {
-				tableModel = m.stageTable
-			}
-			if tableModel.Cursor() < len(tableModel.Rows())-1 {
-				tableModel.SetCursor(tableModel.Cursor() + 1)
-				// tableModel.UpdateViewport()
-				tableModel, cmd = tableModel.Update(msg)
-				m.updateStagesTable()
-			}
-
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
