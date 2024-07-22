@@ -53,7 +53,7 @@ func InitialModel() model {
 	stageColumns := []table.Column{
 		{Title: "Stage", Width: 10},
 		{Title: "Status", Width: 10},
-		{Title: "Result", Width: 10},
+		{Title: "Result", Width: 40},
 	}
 
 	pipelineTable := table.New(
@@ -181,7 +181,7 @@ func (m model) View() string {
 		BorderForeground(lipgloss.Color("240"))
 
 	mainTableWidth := m.width/2 - 4
-	stageInfoWidth := m.width/3 - 4
+	stageInfoWidth := m.width/2 - 4
 
 	m.pipelineTable.SetWidth(mainTableWidth)
 	m.stageTable.SetWidth(stageInfoWidth)

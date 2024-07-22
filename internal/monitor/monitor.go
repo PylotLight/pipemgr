@@ -167,8 +167,16 @@ func (m *ADOMonitor) fetchPipelineTimeline(BuildId *int, status display.Pipeline
 			if *record.State == "pending" {
 				approval := m.processApprovals(&record, timeline.Records)
 				if approval != nil {
-					// resultString = approval.Steps[0]
-					resultString = fmt.Sprintf("Awaiting Approval %s", *(*approval.Steps)[0].ActualApprover.DisplayName)
+					if len(*approval.Steps) == 1 {
+						// println("step")
+						appovalStep := (*approval.Steps)[0]
+						// println("groupname")
+						// fmt.Printf("%+v", appovalStep.AssignedApprover)
+						ApproverGroupName := appovalStep.AssignedApprover.DisplayName
+						// println("print")
+						resultString = fmt.Sprintf("Awaiting Approval %s", *ApproverGroupName)
+					}
+
 					// fmt.Printf("%+v", approval)
 				}
 			}
