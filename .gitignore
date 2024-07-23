@@ -23,5 +23,4 @@ go.work.sum
 
 # Other files
 config.yml
-config.yaml
 __debug*
