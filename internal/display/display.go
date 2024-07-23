@@ -31,8 +31,7 @@ type StageStatus struct {
 }
 
 type model struct {
-	statuses []PipelineStatus
-	// stageStatuses []StageStatus
+	statuses       []PipelineStatus
 	pipelineTable  table.Model
 	stageTable     table.Model
 	focusIndex     int
