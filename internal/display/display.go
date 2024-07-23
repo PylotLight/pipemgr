@@ -3,35 +3,19 @@ package display
 import (
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/google/uuid"
+
+	"github.com/pylotlight/adoMonitor/internal/monitor"
+	"github.com/pylotlight/adoMonitor/internal/types"
 )
 
-type PipelineStatus struct {
-	ID           string
-	Name         string
-	Status       string
-	Result       string
-	CreatedDate  string
-	FinishedDate string
-	Stages       []StageStatus
-	TimeElapsed  string
-}
-
-type StageStatus struct {
-	ID     uuid.UUID
-	Name   string
-	Status string
-	Result string
-	Order  int
-}
-
 type model struct {
-	statuses       []PipelineStatus
+	statuses       []types.PipelineStatus
 	pipelineTable  table.Model
 	stageTable     table.Model
 	focusIndex     int
@@ -39,6 +23,38 @@ type model struct {
 	stageCursor    int
 	width          int
 	height         int
+	// actionCallback types.ActionCallback
+}
+
+type TUIDisplay struct {
+	program *tea.Program
+	model   *model
+	mu      sync.Mutex
+	monitor *monitor.ADOMonitor // Add this line
+}
+
+type updateMsg struct{}
+
+func NewTUIDisplay(m *monitor.ADOMonitor) *TUIDisplay {
+	model := InitialModel()
+	p := tea.NewProgram(model, tea.WithAltScreen())
+	return &TUIDisplay{
+		program: p,
+		model:   &model,
+		monitor: m, // Add this line
+	}
+}
+
+func (d *TUIDisplay) Update(statuses []types.PipelineStatus) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.model.statuses = statuses
+	d.program.Send(updateMsg{})
+}
+
+func (d *TUIDisplay) Run() error {
+	_, err := d.program.Run()
+	return err
 }
 
 func InitialModel() model {
@@ -116,13 +132,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.stageTable, cmd = m.stageTable.Update(msg)
 				m.stageTable.SetCursor(cursorMov)
 			}
+		case "enter":
+			selectedID := m.stageTable.SelectedRow()[0]
+			println(selectedID)
+			// m.
+			// err := m.monitor.PerformAction(selectedID)
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 		m.pipelineTable.SetHeight(m.height/2 - 2)
 		m.stageTable.SetHeight(m.height/2 - 2)
-	case []PipelineStatus:
+	case []types.PipelineStatus:
 		m.statuses = msg
 		m.updateTables()
 	}
@@ -202,7 +223,7 @@ func (m model) View() string {
 	return lipgloss.JoinVertical(lipgloss.Left, mainView, help)
 }
 
-func PipelineStatuses(statuses []PipelineStatus) {
+func PipelineStatuses(statuses []types.PipelineStatus) {
 	p := tea.NewProgram(InitialModel(), tea.WithAltScreen())
 	go func() {
 		for {

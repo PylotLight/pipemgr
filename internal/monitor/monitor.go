@@ -13,11 +13,9 @@ import (
 	"github.com/microsoft/azure-devops-go-api/azuredevops/v7/build"
 	"github.com/microsoft/azure-devops-go-api/azuredevops/v7/pipelinesapproval"
 	"github.com/pylotlight/adoMonitor/internal/config"
-	"github.com/pylotlight/adoMonitor/internal/display"
+	"github.com/pylotlight/adoMonitor/internal/types"
 	"golang.org/x/text/cases"
 	"golang.org/x/text/language"
-
-	tea "github.com/charmbracelet/bubbletea"
 )
 
 type ADOMonitor struct {
@@ -28,8 +26,12 @@ type ADOMonitor struct {
 	pipelines      []string
 	project        string
 	updateInterval time.Duration
-	statusChan     chan display.PipelineStatus
+	statusChan     chan types.PipelineStatus
 	StatusMap      map[string]string
+	// actionCallback types.ActionCallback
+	observers []types.Observer
+	statuses  []types.PipelineStatus
+	statusMu  sync.RWMutex
 }
 
 type RecordInfo struct {
@@ -55,7 +57,8 @@ func NewADOMonitor(pat, org, project string) (*ADOMonitor, error) {
 		project:        project,
 		ctx:            ctx,
 		updateInterval: 10 * time.Second, // API call interval
-		statusChan:     make(chan display.PipelineStatus, 100),
+		statusChan:     make(chan types.PipelineStatus, 100),
+		observers:      make([]types.Observer, 0),
 	}, nil
 }
 
@@ -67,9 +70,28 @@ func (m *ADOMonitor) SetUpdateInterval(interval time.Duration) {
 	m.updateInterval = interval
 }
 
+func (m *ADOMonitor) Register(o types.Observer) {
+	m.observers = append(m.observers, o)
+}
+
+func (m *ADOMonitor) Unregister(o types.Observer) {
+	for i, observer := range m.observers {
+		if observer == o {
+			m.observers = append(m.observers[:i], m.observers[i+1:]...)
+			break
+		}
+	}
+}
+func (m *ADOMonitor) NotifyAll() {
+	m.statusMu.RLock()
+	defer m.statusMu.RUnlock()
+	for _, observer := range m.observers {
+		observer.Update(m.statuses)
+	}
+}
+
 func (m *ADOMonitor) MonitorPipelines(ctx context.Context) {
 	go m.updatePipelineStatuses(ctx)
-	m.displayUpdates(ctx)
 }
 
 func (m *ADOMonitor) updatePipelineStatuses(ctx context.Context) {
@@ -82,6 +104,7 @@ func (m *ADOMonitor) updatePipelineStatuses(ctx context.Context) {
 			return
 		case <-ticker.C:
 			var wg sync.WaitGroup
+			newStatuses := make([]types.PipelineStatus, 0)
 			for _, url := range m.pipelines {
 				wg.Add(1)
 				go func(url string) {
@@ -101,22 +124,37 @@ func (m *ADOMonitor) updatePipelineStatuses(ctx context.Context) {
 						fmt.Printf("Error fetching pipeline timeline: %v\n", err)
 						return
 					}
-					m.statusChan <- status
+					m.statusMu.Lock()
+					newStatuses = append(newStatuses, status)
+					m.statusMu.Unlock()
 				}(url)
 			}
 			wg.Wait()
+
+			m.statusMu.Lock()
+			m.statuses = newStatuses
+			m.statusMu.Unlock()
+
+			m.NotifyAll()
 		}
 	}
 }
 
-func (m *ADOMonitor) fetchPipelineStatus(BuildId *int) (display.PipelineStatus, error) {
+func (m *ADOMonitor) PerformAction(ApprovalRecordID string) error {
+	// Implement your action logic here
+	fmt.Printf("Performing action on pipeline %s\n", ApprovalRecordID)
+	// Add your actual implementation here
+	return nil
+}
+
+func (m *ADOMonitor) fetchPipelineStatus(BuildId *int) (types.PipelineStatus, error) {
 
 	build, err := m.buildClient.GetBuild(m.ctx, build.GetBuildArgs{
 		Project: &m.project,
 		BuildId: BuildId,
 	})
 	if err != nil {
-		return display.PipelineStatus{}, fmt.Errorf("error fetching build %d: %v", *BuildId, err)
+		return types.PipelineStatus{}, fmt.Errorf("error fetching build %d: %v", *BuildId, err)
 	}
 
 	resultString := ""
@@ -124,7 +162,7 @@ func (m *ADOMonitor) fetchPipelineStatus(BuildId *int) (display.PipelineStatus, 
 		resultString = string(*build.Result)
 	}
 
-	status := display.PipelineStatus{
+	status := types.PipelineStatus{
 		ID:     fmt.Sprintf("%d", *build.Id),
 		Name:   fmt.Sprintf("%s - %s", *build.Definition.Name, *build.BuildNumber),
 		Status: cases.Title(language.English).String(string(*build.Status)),
@@ -143,7 +181,7 @@ func (m *ADOMonitor) fetchPipelineStatus(BuildId *int) (display.PipelineStatus, 
 	return status, nil
 }
 
-func (m *ADOMonitor) fetchPipelineTimeline(BuildId *int, status display.PipelineStatus) (display.PipelineStatus, error) {
+func (m *ADOMonitor) fetchPipelineTimeline(BuildId *int, status types.PipelineStatus) (types.PipelineStatus, error) {
 	// Get the timeline for the build
 	timeline, err := m.buildClient.GetBuildTimeline(m.ctx, build.GetBuildTimelineArgs{
 		Project: &m.project,
@@ -172,7 +210,7 @@ func (m *ADOMonitor) fetchPipelineTimeline(BuildId *int, status display.Pipeline
 					// fmt.Printf("%+v", approval)
 				}
 			}
-			stage := []display.StageStatus{
+			stage := []types.StageStatus{
 				{
 					ID:     *record.Id,
 					Order:  *record.Order,
@@ -233,28 +271,28 @@ func calculateTimeElapsed(startTime time.Time, finishTime *azuredevops.Time) str
 	return fmt.Sprintf("%02d:%02d:%02d", int(elapsed.Hours()), int(elapsed.Minutes())%60, int(elapsed.Seconds())%60)
 }
 
-func (m *ADOMonitor) displayUpdates(ctx context.Context) {
-	statuses := make(map[string]display.PipelineStatus)
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
-	p := tea.NewProgram(display.InitialModel())
-	go func() {
-		if _, err := p.Run(); err != nil {
-			fmt.Println("Error running program:", err)
-		}
-	}()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case status := <-m.statusChan:
-			statuses[status.ID] = status
-		case <-ticker.C:
-			var statusList []display.PipelineStatus
-			for _, status := range statuses {
-				statusList = append(statusList, status)
-			}
-			p.Send(statusList)
-		}
-	}
-}
+// func (m *ADOMonitor) displayUpdates(ctx context.Context) {
+// 	statuses := make(map[string]types.PipelineStatus)
+// 	ticker := time.NewTicker(time.Second)
+// 	defer ticker.Stop()
+// 	p := tea.NewProgram(display.InitialModel())
+// 	go func() {
+// 		if _, err := p.Run(); err != nil {
+// 			fmt.Println("Error running program:", err)
+// 		}
+// 	}()
+// 	for {
+// 		select {
+// 		case <-ctx.Done():
+// 			return
+// 		case status := <-m.statusChan:
+// 			statuses[status.ID] = status
+// 		case <-ticker.C:
+// 			var statusList []types.PipelineStatus
+// 			for _, status := range statuses {
+// 				statusList = append(statusList, status)
+// 			}
+// 			p.Send(statusList)
+// 		}
+// 	}
+// }

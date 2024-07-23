@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/pylotlight/adoMonitor/internal/config"
+	"github.com/pylotlight/adoMonitor/internal/display"
 	"github.com/pylotlight/adoMonitor/internal/monitor"
 )
 
@@ -26,10 +27,19 @@ func main() {
 	ado.AddPipelines(cfg.Pipelines)
 	ado.SetUpdateInterval(5 * time.Second)
 
+	tui := display.NewTUIDisplay(ado)
+	ado.Register(tui)
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	go ado.MonitorPipelines(ctx)
+
+	go func() {
+		if err := tui.Run(); err != nil {
+			log.Printf("Error running TUI: %v", err)
+		}
+	}()
 
 	// Wait for interrupt signal to gracefully shutdown the application
 	sigChan := make(chan os.Signal, 1)
