@@ -1,10 +1,8 @@
 package display
 
 import (
-	"fmt"
 	"sort"
 	"sync"
-	"time"
 
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
@@ -23,33 +21,45 @@ type model struct {
 	stageCursor    int
 	width          int
 	height         int
-	// actionCallback types.ActionCallback
+	updateChan     chan []types.PipelineStatus
+	monitor        *monitor.ADOMonitor // Add this line
+	statusMap      map[int]types.StageStatus
 }
 
 type TUIDisplay struct {
-	program *tea.Program
-	model   *model
-	mu      sync.Mutex
-	monitor *monitor.ADOMonitor // Add this line
+	program    *tea.Program
+	model      *model
+	mu         sync.Mutex
+	monitor    *monitor.ADOMonitor // Add this line
+	updateChan chan []types.PipelineStatus
 }
 
-type updateMsg struct{}
-
 func NewTUIDisplay(m *monitor.ADOMonitor) *TUIDisplay {
-	model := InitialModel()
-	p := tea.NewProgram(model, tea.WithAltScreen())
-	return &TUIDisplay{
-		program: p,
-		model:   &model,
-		monitor: m, // Add this line
+	updateChan := make(chan []types.PipelineStatus)
+	initialModel := InitialModel(updateChan)
+	p := tea.NewProgram(initialModel, tea.WithAltScreen())
+
+	tui := &TUIDisplay{
+		program:    p,
+		model:      &initialModel,
+		monitor:    m,
+		updateChan: updateChan,
+	}
+
+	go tui.handleUpdates()
+
+	return tui
+}
+func (d *TUIDisplay) handleUpdates() {
+	for statuses := range d.updateChan {
+		d.program.Send(statuses)
 	}
 }
 
 func (d *TUIDisplay) Update(statuses []types.PipelineStatus) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.model.statuses = statuses
-	d.program.Send(updateMsg{})
+	d.updateChan <- statuses
 }
 
 func (d *TUIDisplay) Run() error {
@@ -57,7 +67,7 @@ func (d *TUIDisplay) Run() error {
 	return err
 }
 
-func InitialModel() model {
+func InitialModel(updateChan chan []types.PipelineStatus) model {
 	pipelineColumns := []table.Column{
 		{Title: "Pipeline", Width: 30},
 		{Title: "Status", Width: 10},
@@ -104,6 +114,8 @@ func InitialModel() model {
 		stageCursor:    0,
 		width:          100,
 		height:         30,
+		updateChan:     updateChan,
+		statusMap:      make(map[int]types.StageStatus),
 	}
 }
 
@@ -133,10 +145,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.stageTable.SetCursor(cursorMov)
 			}
 		case "enter":
-			selectedID := m.stageTable.SelectedRow()[0]
-			println(selectedID)
-			// m.
-			// err := m.monitor.PerformAction(selectedID)
+			if status, ok := m.statusMap[m.stageTable.Cursor()]; ok {
+				if status.ApprovalID != nil {
+					err := m.monitor.PerformAction(status.ApprovalID)
+					if err != nil {
+						// Handle error
+					}
+				}
+			}
+			// uuidID := (uuid.MustParse(selectedID))
+			// err := m.monitor.PerformAction((*uuid.UUID)(&uuidID))
+			/* if err != nil {
+				return nil, nil
+			} */
 		}
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -176,12 +197,13 @@ func (m *model) updateStagesTable() {
 		})
 
 		var stageRows []table.Row
-		for _, stage := range selectedPipeline.Stages {
+		for i, stage := range selectedPipeline.Stages {
 			stageRows = append(stageRows, table.Row{
 				stage.Name,
 				stage.Status,
 				stage.Result,
 			})
+			m.statusMap[i] = stage // Store the full status in the map
 		}
 		m.stageTable.SetRows(stageRows)
 	}
@@ -221,17 +243,4 @@ func (m model) View() string {
 
 	help := "\nUse ↑/↓ to navigate. Tab to switch focus. Press q to quit."
 	return lipgloss.JoinVertical(lipgloss.Left, mainView, help)
-}
-
-func PipelineStatuses(statuses []types.PipelineStatus) {
-	p := tea.NewProgram(InitialModel(), tea.WithAltScreen())
-	go func() {
-		for {
-			p.Send(statuses)
-			time.Sleep(time.Second)
-		}
-	}()
-	if _, err := p.Run(); err != nil {
-		fmt.Println("Error running program:", err)
-	}
 }

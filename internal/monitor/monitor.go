@@ -28,10 +28,9 @@ type ADOMonitor struct {
 	updateInterval time.Duration
 	statusChan     chan types.PipelineStatus
 	StatusMap      map[string]string
-	// actionCallback types.ActionCallback
-	observers []types.Observer
-	statuses  []types.PipelineStatus
-	statusMu  sync.RWMutex
+	observers      []types.Observer
+	statuses       []types.PipelineStatus
+	statusMu       sync.RWMutex
 }
 
 type RecordInfo struct {
@@ -140,10 +139,30 @@ func (m *ADOMonitor) updatePipelineStatuses(ctx context.Context) {
 	}
 }
 
-func (m *ADOMonitor) PerformAction(ApprovalRecordID string) error {
-	// Implement your action logic here
-	fmt.Printf("Performing action on pipeline %s\n", ApprovalRecordID)
-	// Add your actual implementation here
+func (m *ADOMonitor) PerformAction(ApprovalRecordID *uuid.UUID) error {
+	// fmt.Printf("Performing action on pipeline %s\n", ApprovalRecordID)
+	approver := "approved by person in x"
+	params := pipelinesapproval.UpdateApprovalsArgs{
+		Project: &m.project,
+		UpdateParameters: &[]pipelinesapproval.ApprovalUpdateParameters{
+			{
+				ApprovalId: ApprovalRecordID,
+				Status:     &pipelinesapproval.ApprovalStatusValues.Approved,
+				Comment:    &approver,
+			},
+		},
+	}
+	approv, err := m.approvClient.UpdateApprovals(
+		m.ctx,
+		params,
+	)
+	if err != nil {
+		return err
+	}
+	for _, app := range *approv {
+		println(app.Status)
+	}
+
 	return nil
 }
 
@@ -198,18 +217,6 @@ func (m *ADOMonitor) fetchPipelineTimeline(BuildId *int, status types.PipelineSt
 				resultString = strings.ToTitle(string(*record.Result))
 			}
 
-			if *record.State == "pending" {
-				approval := m.processApprovals(&record, timeline.Records)
-				if approval != nil {
-					if len(*approval.Steps) == 1 {
-						appovalStep := (*approval.Steps)[0]
-						ApproverGroupName := appovalStep.AssignedApprover.DisplayName
-						resultString = fmt.Sprintf("Awaiting Approval %s", *ApproverGroupName)
-					}
-
-					// fmt.Printf("%+v", approval)
-				}
-			}
 			stage := []types.StageStatus{
 				{
 					ID:     *record.Id,
@@ -218,6 +225,19 @@ func (m *ADOMonitor) fetchPipelineTimeline(BuildId *int, status types.PipelineSt
 					Status: cases.Title(language.English).String(string(*record.State)),
 					Result: cases.Title(language.English).String(resultString),
 				},
+			}
+			if *record.State == "pending" {
+				approval := m.processApprovals(&record, timeline.Records)
+				if approval != nil {
+					if len(*approval.Steps) == 1 {
+						appovalStep := (*approval.Steps)[0]
+						ApproverGroupName := appovalStep.AssignedApprover.DisplayName
+						stage[0].ApprovalID = approval.Id
+						resultString = fmt.Sprintf("Awaiting Approval %s", *ApproverGroupName)
+					}
+
+					// fmt.Printf("%+v", approval)
+				}
 			}
 			status.Stages = append(status.Stages, stage...)
 		}
@@ -270,29 +290,3 @@ func calculateTimeElapsed(startTime time.Time, finishTime *azuredevops.Time) str
 	}
 	return fmt.Sprintf("%02d:%02d:%02d", int(elapsed.Hours()), int(elapsed.Minutes())%60, int(elapsed.Seconds())%60)
 }
-
-// func (m *ADOMonitor) displayUpdates(ctx context.Context) {
-// 	statuses := make(map[string]types.PipelineStatus)
-// 	ticker := time.NewTicker(time.Second)
-// 	defer ticker.Stop()
-// 	p := tea.NewProgram(display.InitialModel())
-// 	go func() {
-// 		if _, err := p.Run(); err != nil {
-// 			fmt.Println("Error running program:", err)
-// 		}
-// 	}()
-// 	for {
-// 		select {
-// 		case <-ctx.Done():
-// 			return
-// 		case status := <-m.statusChan:
-// 			statuses[status.ID] = status
-// 		case <-ticker.C:
-// 			var statusList []types.PipelineStatus
-// 			for _, status := range statuses {
-// 				statusList = append(statusList, status)
-// 			}
-// 			p.Send(statusList)
-// 		}
-// 	}
-// }

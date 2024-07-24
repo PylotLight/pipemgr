@@ -2,8 +2,6 @@ package types
 
 import "github.com/google/uuid"
 
-type ActionCallback func(pipelineID string) error
-
 type PipelineStatus struct {
 	ID           string
 	Name         string
@@ -16,11 +14,12 @@ type PipelineStatus struct {
 }
 
 type StageStatus struct {
-	ID     uuid.UUID
-	Name   string
-	Status string
-	Result string
-	Order  int
+	ID         uuid.UUID
+	ApprovalID *uuid.UUID
+	Name       string
+	Status     string
+	Result     string
+	Order      int
 }
 
 type Observer interface {

@@ -35,11 +35,9 @@ func main() {
 
 	go ado.MonitorPipelines(ctx)
 
-	go func() {
-		if err := tui.Run(); err != nil {
-			log.Printf("Error running TUI: %v", err)
-		}
-	}()
+	if err := tui.Run(); err != nil {
+		log.Printf("Error running TUI: %v", err)
+	}
 
 	// Wait for interrupt signal to gracefully shutdown the application
 	sigChan := make(chan os.Signal, 1)
